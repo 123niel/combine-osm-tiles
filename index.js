@@ -1,63 +1,57 @@
-const combineTiles = require("combine-tiles");
-const fs = require("fs");
-const https = require("https");
+import { tiles } from "@mapbox/tile-cover";
+import combineTiles from "combine-tiles";
 
-// const [x, y, z] = tileBelt.bboxToTile([
-//   "49.3312",
-//   "10.0214",
-//   "49.3223",
-//   "10.0463",
-// ]);
+import { getPoly, download, deleteFile, createDir } from "./lib.js";
 
-const download = async (filename, url) => {
-  return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(filename);
+// coords of two edge points (x1, y1, x2, y2)
+const poly = getPoly(10.0214, 49.3312, 10.0463, 49.3223);
+// zoom level (https://wiki.openstreetmap.org/wiki/Zoom_levels)
+const z = 18;
 
-    https
-      .get(url, (response) => {
-        response.pipe(file);
+const destFilename = `out-z${z}.png`;
+const size = 256;
 
-        file.on("finish", () => file.close(resolve()));
-      })
-      .on("error", (err) => {
-        fs.unlink(filename);
-        reject();
-      });
-  });
-};
+const main = async () => {
+  const tileArray = [];
 
-z = 18;
-const bounds = [
-  { x: 138364, y: 89655 },
-  { x: 138386, y: 89668 },
-];
+  const tileCover = tiles(poly, { min_zoom: z, max_zoom: z });
+  const maxX = Math.max(...tileCover.map(([x, _]) => x));
+  const minX = Math.min(...tileCover.map(([x, _]) => x));
+  const dx = maxX - minX;
+  const maxY = Math.max(...tileCover.map(([_, y]) => y));
+  const minY = Math.min(...tileCover.map(([_, y]) => y));
+  const dy = maxY - minY;
 
-const dx = bounds[1].x - bounds[0].x;
-const dy = bounds[1].y - bounds[0].y;
+  createDir("tiles");
 
-const tiles = [];
-
-(async () => {
+  const count = tileCover.length;
+  let i = 0;
   for (let x = 0; x <= dx; x++) {
     for (let y = 0; y <= dy; y++) {
-      const url = `https://tile.openstreetmap.de/${z}/${x + bounds[0].x}/${
-        y + bounds[0].y
+      const url = `https://tile.openstreetmap.de/${z}/${x + minX}/${
+        y + minY
       }.png`;
 
       const filename = `tiles/${x}-${y}.png`;
 
       await download(filename, url);
 
-      tiles.push({
+      tileArray.push({
         x,
         y,
         file: filename,
       });
+      i++;
+      console.log(`downloaded tile ${url} (${i}/${count})`);
     }
   }
 
-  const dest = "out.png";
-  const size = 512;
+  await combineTiles(tileArray, size, size, destFilename);
 
-  combineTiles(tiles, size, size, dest).then(() => console.log("done"));
-})().then(console.log("done"));
+  for (const { file } of tileArray) {
+    await deleteFile(file);
+  }
+};
+
+const start = new Date();
+main().then(() => console.log(`done after ${new Date() - start}ms`));
